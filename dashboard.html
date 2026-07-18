@@ -1,0 +1,460 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KV-Cache Optimization: Results Dashboard</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --surface:#ffffff; --surface-2:#fbfbfa; --border:#e6e7eb;
+    --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#8a8a86; --grid:#ececeb;
+    --s-base:#94a3b8; --s-kivi:#2a78d6; --s-kivi2:#86b6ef; --s-topk:#1baf7a;
+    --s-snap:#eb6834; --s-mla:#4a3aa7; --s-flash:#e87ba4;
+    --good:#0ca30c; --bad:#d03b3b;
+    --pos:#2a78d6; --neg:#e34948; --mid:#f0efec;
+    --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  :root[data-theme="dark"], html:where([data-theme="dark"]){
+    --bg:#111211; --surface:#1a1a19; --surface-2:#201f1e; --border:#2f2f2d;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e86; --grid:#282826;
+    --s-base:#7c8794; --s-kivi:#3987e5; --s-kivi2:#6da7ec; --s-topk:#199e70;
+    --s-snap:#d95926; --s-mla:#9085e9; --s-flash:#d55181;
+    --good:#0ca30c; --bad:#e66767;
+    --pos:#3987e5; --neg:#e66767; --mid:#383835;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#111211; --surface:#1a1a19; --surface-2:#201f1e; --border:#2f2f2d;
+      --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e86; --grid:#282826;
+      --s-base:#7c8794; --s-kivi:#3987e5; --s-kivi2:#6da7ec; --s-topk:#199e70;
+      --s-snap:#d95926; --s-mla:#9085e9; --s-flash:#d55181;
+      --good:#0ca30c; --bad:#e66767; --pos:#3987e5; --neg:#e66767; --mid:#383835;
+      --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+  header.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+  h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px}
+  .sub{color:var(--ink-2);font-size:14px;max-width:720px}
+  .sub b{color:var(--ink);font-weight:600}
+  .themebtn{border:1px solid var(--border);background:var(--surface);color:var(--ink-2);
+    border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .themebtn:hover{color:var(--ink)}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0 8px}
+  @media(max-width:820px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 16px 14px;box-shadow:var(--shadow)}
+  .tile .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600}
+  .tile .v{font-size:29px;font-weight:750;letter-spacing:-.02em;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+  .tile .d{font-size:12.5px;color:var(--ink-2)}
+  .tile .v small{font-size:15px;font-weight:600;color:var(--ink-2)}
+  section{margin-top:34px}
+  .sec-h{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}
+  .sec-h h2{font-size:18px;font-weight:680;letter-spacing:-.01em;margin:0}
+  .sec-h span{font-size:13px;color:var(--ink-3)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px 14px;box-shadow:var(--shadow)}
+  .card h3{font-size:14.5px;font-weight:640;margin:0 0 2px}
+  .card p.note{font-size:12.5px;color:var(--ink-2);margin:2px 0 10px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 2px;font-size:12.5px;color:var(--ink-2)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .chart{width:100%;overflow-x:auto}
+  svg{display:block;max-width:100%;height:auto}
+  .ax{fill:var(--ink-3);font-size:11px}
+  .axlbl{fill:var(--ink-2);font-size:11.5px;font-weight:500}
+  .gl{stroke:var(--grid);stroke-width:1}
+  .val{fill:var(--ink-2);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+  .barlbl{fill:var(--ink);font-size:11.5px;font-weight:600}
+  .tt{position:fixed;pointer-events:none;z-index:50;background:var(--surface);color:var(--ink);
+    border:1px solid var(--border);border-radius:9px;padding:8px 10px;font-size:12px;
+    box-shadow:0 6px 20px rgba(0,0,0,.16);opacity:0;transition:opacity .08s;max-width:240px}
+  .tt b{font-weight:650}
+  .tt .row{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+  .tt .row i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:6px}
+  .hbar rect,.hm rect,.dot,.lpt{cursor:pointer}
+  table.tbl{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  table.tbl th,table.tbl td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
+  table.tbl th:first-child,table.tbl td:first-child{text-align:left}
+  table.tbl th{color:var(--ink-3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--border);font-size:12.5px;color:var(--ink-2)}
+  .footer a{color:var(--s-kivi);text-decoration:none}
+  .footer a:hover{text-decoration:underline}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2)}
+  .full{grid-column:1/-1}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>KV-Cache Optimization on Llama-2-7B</h1>
+      <div class="sub"><b>Six methods</b> benchmarked for quality, throughput, and memory on
+        <b>Llama-2-7B-chat</b> (NVIDIA H100 80GB, Modal). Quality on <b>LongBench</b> (6 tasks × 20 examples = 120).
+        Throughput/memory from a manual greedy-decode loop, prefill=1024, generate=512.</div>
+    </div>
+    <button class="themebtn" id="themebtn">◐ Theme</button>
+  </header>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section>
+    <div class="sec-h"><h2>Quality: LongBench</h2><span>overall score, higher is better · baseline FP16 = 0.291</span></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Overall score by method</h3>
+        <p class="note">KIVI 4-bit and TopK K=1024 are lossless (tie baseline). 2-bit / K=512 lose ~6%.</p>
+        <div class="chart" id="c_qual"></div>
+      </div>
+      <div class="card">
+        <h3>Per-task change vs baseline</h3>
+        <p class="note">Δ score per task. Blue = better than FP16, red = worse. Methods have complementary blind spots.</p>
+        <div class="chart" id="c_heat"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Throughput scaling: KIVI 2-bit vs baseline</h2><span>batch-size sweep, decode phase</span></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Decode throughput vs batch size</h3>
+        <p class="note">KIVI overtakes baseline at BS=16, hits 1.93× at BS=32, and runs to BS=128 where baseline OOMs.</p>
+        <div class="legend" id="l_tput"></div>
+        <div class="chart" id="c_tput"></div>
+      </div>
+      <div class="card">
+        <h3>Peak GPU memory vs batch size</h3>
+        <p class="note">Smaller KV cache lets KIVI serve 4× the batch size (128 vs 32) on one 80GB GPU.</p>
+        <div class="legend" id="l_mem"></div>
+        <div class="chart" id="c_mem"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Memory footprint</h2><span>KV-cache compression</span></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>KV-cache reduction by method</h3>
+        <p class="note">Peak KV-cache shrink vs FP16 baseline (each measured in its own config).</p>
+        <div class="chart" id="c_comp"></div>
+      </div>
+      <div class="card">
+        <h3>MLA latent: KV cache vs prefill length</h3>
+        <p class="note">MLA stores a compressed latent: consistent ~3.9× smaller KV across context lengths (B=1).</p>
+        <div class="legend" id="l_mla"></div>
+        <div class="chart" id="c_mla"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Long context: TopK-Flash @ 32K prefill</h2><span>flash-attention + sparse selection</span></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Time to first token &amp; peak memory</h3>
+        <p class="note">At 32K prefill, TopK-Flash cuts TTFT 33% and peak memory 19% vs full attention.</p>
+        <div class="legend" id="l_flash"></div>
+        <div class="chart" id="c_flash"></div>
+      </div>
+      <div class="card">
+        <h3>Bottom line by workload</h3>
+        <table class="tbl" id="t_summary"></table>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer">
+    <p><span class="pill">Model</span> meta-llama/Llama-2-7b-chat-hf &nbsp;
+       <span class="pill">GPU</span> H100 80GB HBM3 &nbsp;
+       <span class="pill">Eval</span> LongBench, 120 examples &nbsp;
+       <span class="pill">Course</span> HPML Spring 2026, Columbia</p>
+    <p>Repo: <a href="https://github.com/rishika1099/KV-Cache-Implementation">github.com/rishika1099/KV-Cache-Implementation</a>
+       · W&amp;B: <a href="https://wandb.ai/rm4318-columbia-university/kv-cache-hpml">kv-cache-hpml</a>.
+       Numbers sourced from <code>results/RESULTS.md</code>, <code>TOPK_RESULTS.md</code>, <code>RESULTS_MLA.md</code> and result JSONs.
+       MLA quality was measured on a separate slice (baseline 0.238) and is not directly comparable to the 0.291 quality panel above.</p>
+  </div>
+</div>
+
+<div class="tt" id="tt"></div>
+
+<script>
+const CSS = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const NS = "http://www.w3.org/2000/svg";
+const tt = document.getElementById('tt');
+function showTT(html,e){tt.innerHTML=html;tt.style.opacity=1;moveTT(e);}
+function moveTT(e){let x=e.clientX+14,y=e.clientY+14;
+  if(x+tt.offsetWidth>innerWidth-8)x=e.clientX-tt.offsetWidth-14;
+  if(y+tt.offsetHeight>innerHeight-8)y=e.clientY-tt.offsetHeight-14;
+  tt.style.left=x+'px';tt.style.top=y+'px';}
+function hideTT(){tt.style.opacity=0;}
+function el(tag,attrs,parent){const n=document.createElementNS(NS,tag);
+  for(const k in attrs)n.setAttribute(k,attrs[k]);if(parent)parent.appendChild(n);return n;}
+function svg(w,h,parent){const s=el('svg',{viewBox:`0 0 ${w} ${h}`,width:w,height:h,role:'img'},parent);return s;}
+function bind(node,html){node.addEventListener('mousemove',e=>showTT(html,e));node.addEventListener('mouseleave',hideTT);}
+
+/* ---------------- DATA ---------------- */
+const D = {
+  quality:[
+    {m:'Baseline',v:0.291,c:'--s-base',base:true},
+    {m:'KIVI 4-bit',v:0.292,c:'--s-kivi'},
+    {m:'KIVI 2-bit',v:0.273,c:'--s-kivi2'},
+    {m:'TopK K=2048',v:0.290,c:'--s-topk'},
+    {m:'TopK K=1024',v:0.292,c:'--s-topk'},
+    {m:'TopK K=512',v:0.274,c:'--s-topk'},
+  ],
+  tasks:['qasper','multifieldqa','triviaqa','2wikimqa','multi_news','lcc'],
+  base_task:[0.172,0.380,0.644,0.083,0.181,0.287],
+  heat:[ /* method, per-task absolute scores */
+    {m:'KIVI 4-bit', v:[0.194,0.360,0.643,0.083,0.188,0.286]},
+    {m:'KIVI 2-bit', v:[0.133,0.382,0.608,0.050,0.191,0.277]},
+    {m:'TopK K=2048',v:[0.145,0.329,0.731,0.075,0.178,0.282]},
+    {m:'TopK K=1024',v:[0.153,0.281,0.773,0.089,0.183,0.273]},
+    {m:'TopK K=512', v:[0.145,0.237,0.751,0.050,0.178,0.281]},
+  ],
+  bs:[1,2,4,8,16,32,64,128],
+  tput_base:[70,135,242,351,438,497,null,null],
+  tput_kivi:[30,61,123,243,480,957,1295,1517],
+  mem_base:[15.1,16.7,20.0,26.4,39.3,65.0,null,null],
+  mem_kivi:[14.0,14.4,15.3,17.1,20.7,27.8,42.1,70.7],
+  comp:[
+    {m:'KIVI 2-bit',v:2.3,c:'--s-kivi',d:'27.8 vs 65.0 GB peak @ BS=32'},
+    {m:'SnapKV 0.4',v:2.5,c:'--s-snap',d:'878 vs 2150 MB KV @ qasper'},
+    {m:'MLA latent',v:3.9,c:'--s-mla',d:'311 vs 1207 MB KV @ 2048 prefill'},
+  ],
+  mla_pref:[512,1024,2048],
+  mla_base:[402.1,670.6,1207.4],
+  mla_mla:[103.7,172.9,311.3],
+  flash:[
+    {k:'TTFT (ms)',base:2627,val:1761,unit:'ms',delta:'−33%'},
+    {k:'Peak mem (GB)',base:52.1,val:42.1,unit:'GB',delta:'−19%'},
+  ],
+};
+
+/* ---------------- 1. Quality bars ---------------- */
+(function(){
+  const data=D.quality, W=520,H=260, mL=90,mR=44,mT=10,mB=26;
+  const s=svg(W,H,document.getElementById('c_qual'));
+  const max=0.32, x=v=>mL+(v/max)*(W-mL-mR), y0=mT, bh=(H-mT-mB)/data.length;
+  // baseline ref line
+  const bx=x(0.291);
+  el('line',{x1:bx,y1:mT-2,x2:bx,y2:H-mB+4,stroke:CSS('--s-base'),'stroke-width':1.5,'stroke-dasharray':'4 3',opacity:.8},s);
+  el('text',{x:bx,y:mT+8,'text-anchor':'middle',class:'ax'},s).textContent='0.291';
+  data.forEach((d,i)=>{
+    const yy=y0+i*bh+bh*0.16, h=bh*0.62;
+    const g=el('g',{class:'hbar'},s);
+    el('rect',{x:mL,y:yy,width:Math.max(2,x(d.v)-mL),height:h,rx:4,fill:CSS(d.c),opacity:d.base?.55:1},g);
+    el('text',{x:mL-8,y:yy+h/2+4,'text-anchor':'end',class:'axlbl'},s).textContent=d.m;
+    el('text',{x:x(d.v)+7,y:yy+h/2+4,class:'val'},s).textContent=d.v.toFixed(3);
+    const dv=d.v-0.291, sign=dv>0?'+':'';
+    bind(g,`<b>${d.m}</b><div class="row"><span>Overall</span><span>${d.v.toFixed(3)}</span></div>`+
+      (d.base?'':`<div class="row"><span>vs baseline</span><span>${sign}${dv.toFixed(3)} (${sign}${(dv/0.291*100).toFixed(1)}%)</span></div>`));
+  });
+})();
+
+/* ---------------- 2. Per-task delta heatmap ---------------- */
+(function(){
+  const tasks=D.tasks, rows=D.heat, base=D.base_task;
+  const W=520, cellH=30, mL=98,mT=44,mR=12,mB=8, cw=(W-mL-mR)/tasks.length;
+  const H=mT+rows.length*cellH+mB;
+  const s=svg(W,H,document.getElementById('c_heat'));
+  const maxAbs=0.15;
+  function color(dv){
+    const t=Math.max(-1,Math.min(1,dv/maxAbs));
+    const pos=CSS('--pos'), neg=CSS('--neg'), mid=CSS('--mid');
+    return mix(mid, t>=0?pos:neg, Math.abs(t));
+  }
+  function hex2rgb(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');
+    return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+  function mix(a,b,t){const A=hex2rgb(a),B=hex2rgb(b);
+    return `rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(',')})`;}
+  // task headers
+  tasks.forEach((t,j)=>{
+    const tx=mL+j*cw+cw/2;
+    el('text',{x:tx,y:mT-24,'text-anchor':'start',class:'ax',transform:`rotate(-32 ${tx} ${mT-24})`,'font-size':10},s).textContent=t;
+  });
+  rows.forEach((r,i)=>{
+    const ry=mT+i*cellH;
+    el('text',{x:mL-8,y:ry+cellH/2+4,'text-anchor':'end',class:'axlbl'},s).textContent=r.m;
+    r.v.forEach((val,j)=>{
+      const dv=val-base[j];
+      const g=el('g',{class:'hm'},s);
+      el('rect',{x:mL+j*cw+1,y:ry+1,width:cw-2,height:cellH-2,rx:3,fill:color(dv)},g);
+      const lum=Math.abs(dv/maxAbs)>0.55;
+      el('text',{x:mL+j*cw+cw/2,y:ry+cellH/2+4,'text-anchor':'middle','font-size':10,'font-weight':600,
+        fill:lum?'#fff':CSS('--ink-2'),'font-variant-numeric':'tabular-nums'},g)
+        .textContent=(dv>0?'+':'')+dv.toFixed(2);
+      bind(g,`<b>${r.m} · ${tasks[j]}</b><div class="row"><span>score</span><span>${val.toFixed(3)}</span></div>`+
+        `<div class="row"><span>baseline</span><span>${base[j].toFixed(3)}</span></div>`+
+        `<div class="row"><span>Δ</span><span>${dv>0?'+':''}${dv.toFixed(3)}</span></div>`);
+    });
+  });
+})();
+
+/* ---------------- line chart helper ---------------- */
+function lineChart(mount,legendMount,series,opts){
+  const {xs,xlabel,ylabel,yfmt,xIsLog}=opts;
+  const W=520,H=280,mL=52,mR=16,mT=14,mB=42;
+  const s=svg(W,H,mount);
+  const allY=series.flatMap(se=>se.data.filter(v=>v!=null));
+  const ymax=opts.ymax||Math.ceil(Math.max(...allY)/100)*100||Math.max(...allY)*1.1;
+  const xpos=i=> mL+(i/(xs.length-1))*(W-mL-mR);
+  const ypos=v=> H-mB-(v/ymax)*(H-mT-mB);
+  // grid + y ticks
+  const ticks=5;
+  for(let t=0;t<=ticks;t++){const yv=ymax*t/ticks, yy=ypos(yv);
+    el('line',{x1:mL,y1:yy,x2:W-mR,y2:yy,class:'gl'},s);
+    el('text',{x:mL-8,y:yy+4,'text-anchor':'end',class:'ax'},s).textContent=yfmt?yfmt(yv):yv;
+  }
+  // x labels
+  xs.forEach((xv,i)=>{el('text',{x:xpos(i),y:H-mB+18,'text-anchor':'middle',class:'ax'},s).textContent=xv;});
+  el('text',{x:(mL+W-mR)/2,y:H-6,'text-anchor':'middle',class:'axlbl'},s).textContent=xlabel;
+  el('text',{x:14,y:mT+2,class:'axlbl',transform:`rotate(-90 14 ${(mT+H-mB)/2})`,'text-anchor':'middle'},s).textContent='';
+  el('text',{x:-((mT+H-mB)/2),y:15,transform:'rotate(-90)','text-anchor':'middle',class:'axlbl'},s).textContent=ylabel;
+  // lines
+  series.forEach(se=>{
+    const col=CSS(se.c);
+    let d='',started=false;
+    se.data.forEach((v,i)=>{ if(v==null){started=false;return;}
+      d+=(started?'L':'M')+xpos(i)+' '+ypos(v)+' ';started=true;});
+    el('path',{d,fill:'none',stroke:col,'stroke-width':2.4,'stroke-linejoin':'round','stroke-linecap':'round'},s);
+    se.data.forEach((v,i)=>{ if(v==null)return;
+      const g=el('g',{},s);
+      el('circle',{cx:xpos(i),cy:ypos(v),r:4.5,fill:CSS('--surface'),stroke:col,'stroke-width':2,class:'lpt'},g);
+      bind(g,`<b>${se.name}</b><div class="row"><span>${xlabel}</span><span>${xs[i]}</span></div>`+
+        `<div class="row"><span><i style="background:${col}"></i>${ylabel}</span><span>${yfmt?yfmt(v):v}</span></div>`);
+    });
+    // OOM marker where baseline ends
+    if(se.oomAt!=null){const i=se.oomAt;
+      el('text',{x:xpos(i),y:ypos(se.data[i-1]||0)-12,'text-anchor':'middle',fill:CSS('--bad'),'font-size':10,'font-weight':700},s).textContent='OOM →';
+    }
+  });
+  // legend
+  legendMount.innerHTML=series.map(se=>`<span><i style="background:${CSS(se.c)}"></i>${se.name}</span>`).join('');
+}
+
+/* 3. throughput */
+lineChart(document.getElementById('c_tput'),document.getElementById('l_tput'),[
+  {name:'Baseline FP16',c:'--s-base',data:D.tput_base,oomAt:6},
+  {name:'KIVI 2-bit',c:'--s-kivi',data:D.tput_kivi},
+],{xs:D.bs,xlabel:'Batch size',ylabel:'Decode tok/s',ymax:1600,yfmt:v=>v});
+
+/* 4. memory */
+lineChart(document.getElementById('c_mem'),document.getElementById('l_mem'),[
+  {name:'Baseline FP16',c:'--s-base',data:D.mem_base,oomAt:6},
+  {name:'KIVI 2-bit',c:'--s-kivi',data:D.mem_kivi},
+],{xs:D.bs,xlabel:'Batch size',ylabel:'Peak memory (GB)',ymax:80,yfmt:v=>v});
+// 80GB cap line on memory chart
+(function(){const mount=document.getElementById('c_mem');const s=mount.querySelector('svg');
+  const W=520,mL=52,mR=16,mT=14,mB=42,H=280,ymax=80;
+  const yy=H-mB-(80/ymax)*(H-mT-mB);
+  el('line',{x1:mL,y1:yy,x2:W-mR,y2:yy,stroke:CSS('--bad'),'stroke-width':1.2,'stroke-dasharray':'5 3',opacity:.7},s);
+  el('text',{x:W-mR,y:yy+13,'text-anchor':'end',fill:CSS('--bad'),'font-size':10,'font-weight':600},s).textContent='H100 80GB';
+})();
+
+/* ---------------- 5. compression bars (vertical) ---------------- */
+(function(){
+  const data=D.comp, W=520,H=260,mL=40,mR=16,mT=18,mB=40;
+  const s=svg(W,H,document.getElementById('c_comp'));
+  const max=4.5, bw=(W-mL-mR)/data.length, y=v=>H-mB-(v/max)*(H-mT-mB);
+  for(let t=0;t<=4;t++){const yv=t, yy=y(yv);
+    el('line',{x1:mL,y1:yy,x2:W-mR,y2:yy,class:'gl'},s);
+    el('text',{x:mL-8,y:yy+4,'text-anchor':'end',class:'ax'},s).textContent=yv+'×';}
+  // baseline 1x
+  el('line',{x1:mL,y1:y(1),x2:W-mR,y2:y(1),stroke:CSS('--s-base'),'stroke-width':1.4,'stroke-dasharray':'4 3'},s);
+  el('text',{x:W-mR-2,y:y(1)-5,'text-anchor':'end',class:'ax'},s).textContent='baseline 1×';
+  data.forEach((d,i)=>{
+    const cx=mL+i*bw+bw*0.5, w=bw*0.42, x=cx-w/2;
+    const g=el('g',{class:'hbar'},s);
+    el('rect',{x,y:y(d.v),width:w,height:y(0)-y(d.v),rx:5,fill:CSS(d.c)},g);
+    el('text',{x:cx,y:y(d.v)-7,'text-anchor':'middle',class:'barlbl'},s).textContent=d.v+'×';
+    el('text',{x:cx,y:H-mB+16,'text-anchor':'middle',class:'axlbl'},s).textContent=d.m;
+    bind(g,`<b>${d.m}</b><div class="row"><span>KV reduction</span><span>${d.v}×</span></div><div style="color:var(--ink-3);margin-top:3px">${d.d}</div>`);
+  });
+})();
+
+/* ---------------- 6. MLA grouped bars ---------------- */
+(function(){
+  const W=520,H=260,mL=48,mR=16,mT=18,mB=42;
+  const s=svg(W,H,document.getElementById('c_mla'));
+  const groups=D.mla_pref, max=1300, gw=(W-mL-mR)/groups.length, y=v=>H-mB-(v/max)*(H-mT-mB);
+  for(let t=0;t<=5;t++){const yv=max*t/5, yy=y(yv);
+    el('line',{x1:mL,y1:yy,x2:W-mR,y2:yy,class:'gl'},s);
+    el('text',{x:mL-8,y:yy+4,'text-anchor':'end',class:'ax'},s).textContent=Math.round(yv);}
+  el('text',{x:-((mT+H-mB)/2),y:13,transform:'rotate(-90)','text-anchor':'middle',class:'axlbl'},s).textContent='KV cache (MB)';
+  const pair=[{n:'Baseline',c:'--s-base',arr:D.mla_base},{n:'MLA latent',c:'--s-mla',arr:D.mla_mla}];
+  groups.forEach((pf,gi)=>{
+    const gx=mL+gi*gw, bw=gw*0.28;
+    pair.forEach((p,pi)=>{
+      const x=gx+gw*0.5-bw+pi*bw*1.05-bw*0.02, v=p.arr[gi];
+      const g=el('g',{class:'hbar'},s);
+      el('rect',{x,y:y(v),width:bw,height:y(0)-y(v),rx:4,fill:CSS(p.c)},g);
+      bind(g,`<b>${p.n} · ${pf} prefill</b><div class="row"><span>KV cache</span><span>${v} MB</span></div>`+
+        `<div class="row"><span>ratio</span><span>${(D.mla_base[gi]/D.mla_mla[gi]).toFixed(1)}× smaller</span></div>`);
+    });
+    el('text',{x:gx+gw*0.5,y:H-mB+16,'text-anchor':'middle',class:'axlbl'},s).textContent=pf+' tok';
+  });
+  document.getElementById('l_mla').innerHTML=pair.map(p=>`<span><i style="background:${CSS(p.c)}"></i>${p.n}</span>`).join('');
+})();
+
+/* ---------------- 7. Flash 32K grouped (normalized twin bars) ---------------- */
+(function(){
+  const W=520,H=250,mT=20,mB=40, rows=D.flash, rh=(H-mT-mB)/rows.length, mL=110,mR=70;
+  const s=svg(W,H,document.getElementById('c_flash'));
+  rows.forEach((r,i)=>{
+    const cy=mT+i*rh, max=Math.max(r.base,r.val)*1.15;
+    const x=v=>mL+(v/max)*(W-mL-mR);
+    el('text',{x:mL-10,y:cy+rh/2+4,'text-anchor':'end',class:'axlbl'},s).textContent=r.k;
+    [['Full attn',r.base,'--s-base'],['TopK-Flash',r.val,'--s-flash']].forEach((b,bi)=>{
+      const yy=cy+rh*0.16+bi*(rh*0.34), h=rh*0.26;
+      const g=el('g',{class:'hbar'},s);
+      el('rect',{x:mL,y:yy,width:Math.max(2,x(b[1])-mL),height:h,rx:4,fill:CSS(b[2])},g);
+      el('text',{x:x(b[1])+6,y:yy+h/2+4,class:'val'},s).textContent=b[1];
+      bind(g,`<b>${b[0]}</b><div class="row"><span>${r.k}</span><span>${b[1]} ${r.unit}</span></div>`);
+    });
+    el('text',{x:W-mR+10,y:cy+rh/2+4,class:'val',fill:CSS('--good'),'font-weight':700},s).textContent=r.delta;
+  });
+  document.getElementById('l_flash').innerHTML=
+    `<span><i style="background:${CSS('--s-base')}"></i>Full attention</span>`+
+    `<span><i style="background:${CSS('--s-flash')}"></i>TopK-Flash</span>`;
+})();
+
+/* ---------------- summary table ---------------- */
+(function(){
+  const rows=[
+    ['Interactive / low latency','KIVI 4-bit','Lossless quality, 4-bit KV, no TTFT cliff'],
+    ['High-throughput serving','KIVI 2-bit','1.93× decode @ BS=32, up to 3.1× peak, 4× batch'],
+    ['Quality at a token budget','TopK K=1024','Lossless overall, +20% on triviaqa'],
+    ['Tight memory / long context','MLA · TopK-Flash','3.9× KV; 32K TTFT −33%, mem −19%'],
+  ];
+  const t=document.getElementById('t_summary');
+  t.innerHTML='<tr><th>Workload</th><th>Pick</th><th>Why</th></tr>'+
+    rows.map(r=>`<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td style="text-align:left;color:var(--ink-2)">${r[2]}</td></tr>`).join('');
+  // fix header alignment for last col
+})();
+
+/* ---------------- tiles ---------------- */
+(function(){
+  const tiles=[
+    {k:'Best throughput gain',v:'3.1×',d:'KIVI 2-bit peak vs baseline max (1517 vs 497 tok/s)',c:'--s-kivi'},
+    {k:'Lossless quality',v:'0.292 <small>vs 0.291</small>',d:'KIVI 4-bit & TopK K=1024 on LongBench',c:'--s-topk'},
+    {k:'Max KV reduction',v:'3.9×',d:'MLA latent cache vs FP16',c:'--s-mla'},
+    {k:'Batch headroom',v:'4×',d:'KIVI runs BS=128 where baseline OOMs at 64',c:'--s-snap'},
+  ];
+  document.getElementById('tiles').innerHTML=tiles.map(t=>
+    `<div class="tile" style="border-top:3px solid ${CSS(t.c)}">
+       <div class="k">${t.k}</div><div class="v">${t.v}</div><div class="d">${t.d}</div></div>`).join('');
+})();
+
+/* ---------------- theme toggle (re-render on switch) ---------------- */
+document.getElementById('themebtn').addEventListener('click',()=>{
+  const root=document.documentElement;
+  const dark=getComputedStyle(root).getPropertyValue('--bg').trim().startsWith('#11')||
+             (root.getAttribute('data-theme')==='dark');
+  root.setAttribute('data-theme',dark?'light':'dark');
+  location.reload();
+});
+</script>
